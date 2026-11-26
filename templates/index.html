@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>openTv — Free-to-Air Live TV</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/opentv_logo.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="navbar">
+    <a class="brand" href="/" aria-label="openTv home">
+      <img src="{{ url_for('static', filename='images/opentv_logo.svg') }}" alt="openTv logo">
+    </a>
+    <label class="search">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9aa6b6" stroke-width="2" aria-hidden="true">
+        <circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path>
+      </svg>
+      <input id="search" type="search" placeholder="Search 200+ Free Channels..." autocomplete="off" aria-label="Search channels">
+    </label>
+    <div class="nav-right">
+      <span class="badge"><span class="dot"></span> FTA Live</span>
+      <span class="credit">By Raj Gautam</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <img class="hero-banner" src="{{ url_for('static', filename='images/hero_banner.svg') }}" alt="openTv — Free-to-Air Live TV">
+      {% if featured %}
+      <button class="hero-play play-btn" type="button"
+              data-stream="{{ featured[0].stream }}" data-name="{{ featured[0].name }}" data-logo="{{ featured[0].logo }}">
+        &#9654; Watch {{ featured[0].name }}
+      </button>
+      {% endif %}
+    </section>
+
+    <section class="theater" id="theater">
+      <div class="stage">
+        <div class="player-head">
+          <span class="live-badge">&#9679; LIVE</span>
+          <strong id="now-playing">Select a channel</strong>
+          <span class="source-note">{{ channel_count }} channels &middot; {{ source }}</span>
+        </div>
+        <div class="video-wrap">
+          <video id="tv-player" controls playsinline preload="none"></video>
+          <div class="overlay" id="offline-overlay" hidden>
+            <div class="overlay-card">
+              <h2>Stream Offline</h2>
+              <p id="offline-text">Select another channel and try again.</p>
+            </div>
+          </div>
+        </div>
+        <div class="player-bar">
+          <button id="theater-toggle" type="button">&#9974; Theater</button>
+          <button id="fullscreen" type="button">&#26eb; Fullscreen</button>
+          <span id="status">Ready &mdash; choose a channel above to start live TV</span>
+        </div>
+      </div>
+
+      <aside class="quick">
+        <h2>QUICK CHANNELS</h2>
+        <div id="quick-list">
+          {% for channel in featured %}
+          <button class="quick-item play-btn" type="button"
+                  data-stream="{{ channel.stream }}" data-name="{{ channel.name }}" data-logo="{{ channel.logo }}">
+            <span class="logo-box"><img src="{{ channel.logo or url_for('static', filename='images/opentv_logo.svg') }}" alt="" loading="lazy"></span>
+            <span class="quick-name">{{ channel.name }}</span>
+          </button>
+          {% endfor %}
+        </div>
+      </aside>
+    </section>
+
+    <section class="filters">
+      <div class="tabs" id="tabs">
+        {% for tab in ['All', 'News', 'Entertainment', 'Music', 'Movies', 'Devotional', 'Kids'] %}
+        <button class="tab{% if loop.first %} active{% endif %}" type="button" data-filter="{{ tab|lower }}">{{ 'All Channels' if tab == 'All' else tab }}</button>
+        {% endfor %}
+      </div>
+      <span id="result-count">{{ channel_count }} channels</span>
+    </section>
+
+    <section class="grid" id="channel-grid">
+      {% for channel in channels %}
+      <button class="card play-btn" type="button"
+              data-stream="{{ channel.stream }}"
+              data-name="{{ channel.name }}"
+              data-logo="{{ channel.logo }}"
+              data-category="{{ channel.bucket }}"
+              data-search="{{ (channel.name ~ ' ' ~ channel.group)|lower }}">
+        <span class="logo-box"><img src="{{ channel.logo or url_for('static', filename='images/opentv_logo.svg') }}" alt="{{ channel.name }} logo" loading="lazy"></span>
+        <span class="card-name">{{ channel.name }}</span>
+        <span class="card-cat">{{ channel.group }}</span>
+      </button>
+      {% endfor %}
+    </section>
+    <p id="empty" hidden>No channels match your search.</p>
+  </main>
+
+  <footer>
+    Built with &#10084;&#65039; by Open Source Lover Raj Gautam &middot;
+    <a href="{{ repo_url }}" target="_blank" rel="noopener">github.com/Rg100152/openTv</a>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var FALLBACK_LOGO = "{{ url_for('static', filename='images/opentv_logo.svg') }}";
+      var video = document.getElementById('tv-player');
+      var overlay = document.getElementById('offline-overlay');
+      var offlineText = document.getElementById('offline-text');
+      var nowPlaying = document.getElementById('now-playing');
+      var status = document.getElementById('status');
+      var search = document.getElementById('search');
+      var resultCount = document.getElementById('result-count');
+      var empty = document.getElementById('empty');
+      var cards = Array.prototype.slice.call(document.querySelectorAll('#channel-grid .card'));
+      var hls = null;
+      var activeFilter = 'all';
+
+      // Local logo fallback; never leave a broken image icon on screen.
+      document.querySelectorAll('.logo-box img').forEach(function (img) {
+        img.addEventListener('error', function () {
+          if (!img.dataset.fallback) {
+            img.dataset.fallback = '1';
+            img.src = FALLBACK_LOGO;
+          }
+        });
+      });
+
+      function applyFilters() {
+        var query = search.value.trim().toLowerCase();
+        var shown = 0;
+        cards.forEach(function (card) {
+          var matchesCategory = activeFilter === 'all' || card.dataset.category === activeFilter;
+          var matchesSearch = !query || card.dataset.search.indexOf(query) !== -1;
+          card.hidden = !(matchesCategory && matchesSearch);
+          if (!card.hidden) { shown += 1; }
+        });
+        resultCount.textContent = shown + ' channels';
+        empty.hidden = shown !== 0;
+      }
+
+      search.addEventListener('input', applyFilters);
+      document.getElementById('tabs').addEventListener('click', function (event) {
+        var tab = event.target.closest('.tab');
+        if (!tab) { return; }
+        activeFilter = tab.dataset.filter;
+        document.querySelectorAll('.tab').forEach(function (item) {
+          item.classList.toggle('active', item === tab);
+        });
+        applyFilters();
+      });
+
+      function stopPlayback() {
+        if (hls) { hls.destroy(); hls = null; }  // free memory before every switch
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      }
+
+      function showOffline(message) {
+        overlay.hidden = false;
+        offlineText.textContent = message || 'Select another channel and try again.';
+        status.textContent = 'Stream offline';
+      }
+
+      function playChannel(button) {
+        var url = button.dataset.stream;
+        if (!url) { return; }
+
+        document.querySelectorAll('.play-btn.active').forEach(function (item) {
+          item.classList.remove('active');
+        });
+        button.classList.add('active');
+        nowPlaying.textContent = button.dataset.name;
+        overlay.hidden = true;
+        status.textContent = 'Connecting...';
+        stopPlayback();
+
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari / iOS native HLS.
+          video.src = url;
+          var nativePlay = video.play();
+          if (nativePlay && nativePlay.catch) {
+            nativePlay.catch(function () { status.textContent = 'Press play to start'; });
+          }
+        } else if (window.Hls && window.Hls.isSupported()) {
+          hls = new window.Hls({
+            maxBufferLength: 15,
+            maxMaxBufferLength: 30,
+            enableWorker: false
+          });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
+            status.textContent = 'Live';
+            var started = video.play();
+            if (started && started.catch) { started.catch(function () {}); }
+          });
+          hls.on(window.Hls.Events.ERROR, function (event, data) {
+            if (data && data.fatal) {
+              stopPlayback();
+              showOffline();
+            }
+          });
+          video.addEventListener('error', function () { showOffline(); }, { once: true });
+        } else {
+          showOffline('HLS playback is not supported in this browser.');
+        }
+      }
+
+      document.addEventListener('click', function (event) {
+        var button = event.target.closest('.play-btn');
+        if (button) { playChannel(button); }
+      });
+
+      document.getElementById('theater-toggle').addEventListener('click', function () {
+        document.getElementById('theater').classList.toggle('theater-on');
+      });
+
+      document.getElementById('fullscreen').addEventListener('click', function () {
+        var theater = document.getElementById('theater');
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else if (theater.requestFullscreen) {
+          theater.requestFullscreen();
+        }
+      });
+
+      applyFilters();
+    })();
+  </script>
+</body>
+</html>
